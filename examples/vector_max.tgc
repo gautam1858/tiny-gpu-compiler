@@ -1,0 +1,19 @@
+// vector_max.tgc -- Element-wise maximum of two vectors
+// c[i] = max(a[i], b[i])
+// Demonstrates conditional control flow on the GPU.
+//
+// Memory layout:
+//   a: addresses 0-63
+//   b: addresses 64-127
+//   c: addresses 128-191
+
+kernel vector_max(global int* a, global int* b, global int* c) {
+    int idx = blockIdx * blockDim + threadIdx;
+    int ai = a[idx];
+    int bi = b[idx];
+    if (ai > bi) {
+        c[idx] = ai;
+    } else {
+        c[idx] = bi;
+    }
+}

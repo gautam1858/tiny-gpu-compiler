@@ -1,0 +1,14 @@
+// RUN: %tgc --emit asm %s | FileCheck %s
+
+// CHECK: MUL
+// CHECK: ADD
+// CHECK: LDR
+// CHECK: LDR
+// CHECK: ADD
+// CHECK: STR
+// CHECK: RET
+
+kernel vector_add(global int* a, global int* b, global int* c) {
+    int idx = blockIdx * blockDim + threadIdx;
+    c[idx] = a[idx] + b[idx];
+}

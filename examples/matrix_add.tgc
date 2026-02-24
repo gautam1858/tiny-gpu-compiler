@@ -1,0 +1,13 @@
+// matrix_add.tgc — Element-wise matrix addition
+// C[i] = A[i] + B[i] where matrices are stored in row-major order
+//
+// This kernel matches tiny-gpu's test_matadd test case.
+// Memory layout:
+//   A: addresses 0-63
+//   B: addresses 64-127
+//   C: addresses 128-191
+
+kernel matrix_add(global int* A, global int* B, global int* C) {
+    int idx = blockIdx * blockDim + threadIdx;
+    C[idx] = A[idx] + B[idx];
+}

@@ -1,0 +1,16 @@
+// RUN: %tgc --emit mlir %s | FileCheck %s
+
+// CHECK: tinygpu.func @vector_add
+// CHECK: tinygpu.block_id
+// CHECK: tinygpu.block_dim
+// CHECK: tinygpu.mul
+// CHECK: tinygpu.thread_id
+// CHECK: tinygpu.add
+// CHECK: tinygpu.load
+// CHECK: tinygpu.store
+// CHECK: tinygpu.ret
+
+kernel vector_add(global int* a, global int* b, global int* c) {
+    int idx = blockIdx * blockDim + threadIdx;
+    c[idx] = a[idx] + b[idx];
+}
