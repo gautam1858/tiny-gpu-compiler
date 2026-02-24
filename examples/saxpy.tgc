@@ -1,0 +1,15 @@
+// saxpy.tgc -- SAXPY: y = a*x + y
+// The classic BLAS Level 1 operation. One of the most common
+// benchmarks for parallel architectures.
+//
+// Memory layout:
+//   x: addresses 0-63
+//   y: addresses 64-127
+//   a: address 192 (scalar, after pointers)
+
+kernel saxpy(global int* x, global int* y, int a) {
+    int idx = blockIdx * blockDim + threadIdx;
+    int xi = x[idx];
+    int yi = y[idx];
+    y[idx] = a * xi + yi;
+}

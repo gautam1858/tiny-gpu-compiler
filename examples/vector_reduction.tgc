@@ -1,0 +1,22 @@
+// vector_reduction.tgc — Conditional accumulation
+// Sums elements of array A where A[i] > threshold, stores result in B[0]
+//
+// This example demonstrates control flow (if statement).
+// NOTE: Since tiny-gpu has no shared memory or atomics, each thread
+// accumulates its own result independently. This is primarily to
+// demonstrate branching in the compiler.
+//
+// Memory layout:
+//   A: addresses 0-63
+//   B: addresses 64-127
+
+kernel vector_filter(global int* A, global int* B) {
+    int idx = blockIdx * blockDim + threadIdx;
+    int val = A[idx];
+    int threshold = 5;
+    if (val > threshold) {
+        B[idx] = val;
+    } else {
+        B[idx] = 0;
+    }
+}

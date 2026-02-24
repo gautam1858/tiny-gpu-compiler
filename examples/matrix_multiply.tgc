@@ -1,0 +1,27 @@
+// matrix_multiply.tgc — Matrix multiplication C = A * B
+// Each thread computes one element of the result matrix.
+//
+// For a 2x2 matrix (N=2):
+//   Thread 0: C[0] = A[0]*B[0] + A[1]*B[2]  (row 0, col 0)
+//   Thread 1: C[1] = A[0]*B[1] + A[1]*B[3]  (row 0, col 1)
+//   Thread 2: C[2] = A[2]*B[0] + A[3]*B[2]  (row 1, col 0)
+//   Thread 3: C[3] = A[2]*B[1] + A[3]*B[3]  (row 1, col 1)
+//
+// Memory layout:
+//   A: addresses 0-63
+//   B: addresses 64-127
+//   C: addresses 128-191
+//   N: address 192
+
+kernel matrix_multiply(global int* A, global int* B, global int* C, int N) {
+    int idx = blockIdx * blockDim + threadIdx;
+    int row = idx / N;
+    int col = idx - row * N;
+    int sum = 0;
+    for (int k = 0; k < N; k = k + 1) {
+        int a_val = A[row * N + k];
+        int b_val = B[k * N + col];
+        sum = sum + a_val * b_val;
+    }
+    C[idx] = sum;
+}

@@ -1,0 +1,15 @@
+// dot_product.tgc -- Partial dot product (per-thread multiply)
+// Each thread computes a[i] * b[i] and stores the partial result.
+// A host-side reduction would sum c[0..N-1] to get the final dot product.
+//
+// Memory layout:
+//   a: addresses 0-63
+//   b: addresses 64-127
+//   c: addresses 128-191
+
+kernel dot_product(global int* a, global int* b, global int* c) {
+    int idx = blockIdx * blockDim + threadIdx;
+    int ai = a[idx];
+    int bi = b[idx];
+    c[idx] = ai * bi;
+}

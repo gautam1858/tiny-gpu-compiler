@@ -1,0 +1,31 @@
+build/
+cmake-build-*/
+.cache/
+compile_commands.json
+
+*.o
+*.a
+*.so
+*.dylib
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*~
+
+# Local dev config
+.local/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Node (web visualizer)
+web/node_modules/
+web/dist/
+web/.env
+
+# WASM build artifacts
+web/public/wasm/*.wasm
+web/public/wasm/*.js

@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cmake ninja-build clang lld python3
+
+    - name: Cache LLVM/MLIR build
+      uses: actions/cache@v4
+      with:
+        path: /opt/llvm-install
+        key: llvm-18.1.8-${{ runner.os }}
+
+    - name: Build LLVM/MLIR (if not cached)
+      run: |
+        if [ ! -d "/opt/llvm-install/lib/cmake/mlir" ]; then
+          git clone --depth 1 --branch llvmorg-18.1.8 https://github.com/llvm/llvm-project.git /tmp/llvm-project
+          cmake -G Ninja -S /tmp/llvm-project/llvm -B /tmp/llvm-build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER=clang \
+            -DCMAKE_CXX_COMPILER=clang++ \
+            -DLLVM_ENABLE_PROJECTS=mlir \
+            -DLLVM_TARGETS_TO_BUILD="host" \
+            -DLLVM_ENABLE_ASSERTIONS=ON \
+            -DCMAKE_INSTALL_PREFIX=/opt/llvm-install
+          cmake --build /tmp/llvm-build --target install -j$(nproc)
+        fi
+
+    - name: Build tiny-gpu-compiler
+      run: |
+        cmake -G Ninja -S . -B build \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DCMAKE_C_COMPILER=clang \
+          -DCMAKE_CXX_COMPILER=clang++ \
+          -DMLIR_DIR=/opt/llvm-install/lib/cmake/mlir \
+          -DLLVM_DIR=/opt/llvm-install/lib/cmake/llvm
+        cmake --build build -j$(nproc)
+
+    - name: Run tests
+      run: |
+        cd build && ninja check-tgc
+
+    - name: Compile examples
+      run: |
+        for f in examples/*.tgc; do
+          echo "=== Compiling $f ==="
+          ./build/bin/tgc --emit asm "$f"
+        done

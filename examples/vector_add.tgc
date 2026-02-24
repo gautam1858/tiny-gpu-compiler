@@ -1,0 +1,12 @@
+// vector_add.tgc — The simplest possible GPU kernel
+// Adds two vectors element-wise: c[i] = a[i] + b[i]
+//
+// Memory layout:
+//   a: addresses 0-63
+//   b: addresses 64-127
+//   c: addresses 128-191
+
+kernel vector_add(global int* a, global int* b, global int* c) {
+    int idx = blockIdx * blockDim + threadIdx;
+    c[idx] = a[idx] + b[idx];
+}
