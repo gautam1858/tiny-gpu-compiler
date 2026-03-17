@@ -16,11 +16,15 @@ enum class TokenKind {
   For,
   If,
   Else,
+  Shared,
 
   // Built-in variables
   ThreadIdx,
   BlockIdx,
   BlockDim,
+
+  // Built-in functions
+  SyncThreads,
 
   // Literals & identifiers
   Identifier,

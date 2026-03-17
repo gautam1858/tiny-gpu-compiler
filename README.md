@@ -14,8 +14,22 @@ Built on [MLIR](https://mlir.llvm.org/) (the compiler infrastructure behind Tens
   <a href="https://gautam1858.github.io/tiny-gpu-compiler/">Live Demo</a> &middot;
   <a href="#quick-start">Quick Start</a> &middot;
   <a href="#the-compilation-pipeline">How It Works</a> &middot;
-  <a href="#the-dsl">Language Reference</a>
+  <a href="#the-dsl">Language Reference</a> &middot;
+  <a href="#advanced-features">Advanced Features</a>
 </p>
+
+---
+
+## What's New
+
+- **Shared Memory + `__syncthreads()`** -- Block-scoped fast scratchpad with barrier synchronization, just like CUDA
+- **Optimization Passes** -- Constant folding, dead code elimination, strength reduction, common subexpression elimination
+- **Warp Divergence Analysis** -- Detects and visualizes when threads take different paths at branches
+- **Memory Coalescing Analysis** -- Shows whether memory accesses are coalesced, strided, or scattered
+- **Performance Profiling** -- Compute/memory ratio, register pressure, estimated cycles, performance scores
+- **Interactive Debugger** -- Click any thread to inspect all 16 registers, NZP flags, and PC in real-time
+- **Shared Memory Visualization** -- Watch the 64-byte scratchpad update live during simulation
+- **3 New ISA Instructions** -- `SLDR` (shared load), `SSTR` (shared store), `BAR` (barrier)
 
 ---
 
@@ -88,7 +102,7 @@ Output:
 
 ## The Compilation Pipeline
 
-The compiler performs four distinct transformations, each visible in the interactive visualizer:
+The compiler performs five distinct transformations, each visible in the interactive visualizer:
 
 ```
      .tgc Source Code
@@ -102,6 +116,11 @@ The compiler performs four distinct transformations, each visible in the interac
    +------------------+
    |     MLIRGen      |     Walks the AST, emits TinyGPU dialect
    +---------+--------+     operations (all values are i8)
+             |
+             v
+   +------------------+
+   | Optimization     |     Constant folding, strength reduction,
+   +---------+--------+     CSE, dead code elimination
              |
              v
    +------------------+
@@ -134,44 +153,48 @@ kernel vector_add(global int* a, global int* b, global int* c) {
 
 The frontend emits operations in the `tinygpu` dialect. Every value is `i8` (8-bit unsigned), matching the hardware's data path. Pointer parameters are mapped to fixed 64-byte regions in data memory (a: 0-63, b: 64-127, c: 128-191).
 
-<p align="center">
-  <img src="docs/images/mlir-view.png" alt="MLIR TinyGPU dialect intermediate representation" width="100%">
-</p>
+### Stage 3: Optimization Passes
 
-### Stage 3: Register Allocation
+Four optimization passes run iteratively until convergence:
+
+| Pass | What It Does | Example |
+|------|-------------|---------|
+| **Constant Folding** | Evaluates compile-time known expressions | `const 3 + const 5` → `const 8` |
+| **Strength Reduction** | Replaces expensive ops with cheaper ones | `mul x, 2` → `add x, x`; `mul x, 0` → `const 0` |
+| **CSE** | Deduplicates identical computations | Two identical `const 64` → reuse one |
+| **Dead Code Elimination** | Removes ops whose results are never used | Unused temporaries deleted |
+
+### Stage 4: Register Allocation
 
 A linear scan allocator assigns physical registers. The IR is annotated with `{rd=N, rs=M, rt=K}` attributes showing which hardware registers each operation uses.
 
-<p align="center">
-  <img src="docs/images/register-allocation.png" alt="Register allocation annotations on MLIR IR" width="100%">
-</p>
-
-### Stage 4: Binary Emission + Execution
+### Stage 5: Binary Emission + Execution
 
 Each instruction is encoded into a 16-bit word. The binary view color-codes each field: opcode (red), destination register (blue), source registers (green, orange). The GPU simulator then executes these instructions across parallel threads.
-
-<p align="center">
-  <img src="docs/images/simulation-complete.png" alt="GPU simulation complete with correct memory results" width="100%">
-</p>
 
 ---
 
 ## The DSL
 
-A minimal language for expressing GPU kernels:
+A minimal language for expressing GPU kernels, now with shared memory support:
 
 ```c
-kernel matrix_multiply(global int* A, global int* B, global int* C, int N) {
+kernel shared_reduce(global int* input, global int* output) {
+    shared int scratch[4];                    // 4-byte shared memory array
     int idx = blockIdx * blockDim + threadIdx;
-    int row = idx / N;
-    int col = idx - row * N;
-    int sum = 0;
-    for (int k = 0; k < N; k = k + 1) {
-        int a_val = A[row * N + k];
-        int b_val = B[k * N + col];
-        sum = sum + a_val * b_val;
+
+    scratch[threadIdx] = input[idx];          // Load into shared memory
+    __syncthreads();                          // Barrier: wait for all threads
+
+    if (threadIdx < 2) {
+        scratch[threadIdx] = scratch[threadIdx] + scratch[threadIdx + 2];
     }
-    C[idx] = sum;
+    __syncthreads();
+
+    if (threadIdx < 1) {
+        scratch[0] = scratch[0] + scratch[1];
+        output[blockIdx] = scratch[0];        // Write reduction result
+    }
 }
 ```
 
@@ -183,10 +206,17 @@ kernel matrix_multiply(global int* A, global int* B, global int* C, int N) {
 | **Comparisons** | `==`, `!=`, `<`, `>`, `<=`, `>=` |
 | **Control flow** | `for` loops, `if`/`else` |
 | **Memory** | Array indexing with `[]` on pointer parameters |
+| **Shared memory** | `shared int name[size]` -- fast block-scoped scratchpad |
+| **Synchronization** | `__syncthreads()` -- barrier across all threads in a block |
 
 ### Memory Layout
 
-Pointer parameters are mapped to contiguous 64-byte regions in the hardware's 256-byte data memory:
+| Memory Type | Size | Latency | Scope |
+|-------------|------|---------|-------|
+| **Global** (data memory) | 256 bytes | High (~4 cycles) | All blocks |
+| **Shared** (scratchpad) | 64 bytes per block | Low (~1 cycle) | Single block |
+
+Pointer parameters map to contiguous 64-byte regions:
 
 | Parameter | Memory Region |
 |-----------|--------------|
@@ -194,6 +224,41 @@ Pointer parameters are mapped to contiguous 64-byte regions in the hardware's 25
 | 2nd `global int*` | Addresses 64-127 |
 | 3rd `global int*` | Addresses 128-191 |
 | Scalar `int` parameters | Addresses 192+ |
+
+---
+
+## Advanced Features
+
+### Warp Divergence Analysis
+
+The compiler and simulator track when threads take different execution paths at branches. In the web UI, divergent threads are highlighted in red with a "DIV" badge, and the simulator shows a "DIVERGENT" indicator when threads are out of sync.
+
+This teaches one of the most important GPU performance concepts: **thread divergence wastes SIMD lanes**.
+
+### Memory Coalescing Analysis
+
+Memory access patterns are analyzed statically:
+- **Coalesced**: Sequential thread access (ideal, 1 transaction per warp)
+- **Strided**: Non-unit stride access (suboptimal, multiple transactions)
+- **Scattered**: Random access (worst case)
+
+The Analysis panel shows each memory instruction's access pattern and estimated transaction count.
+
+### Performance Profiling
+
+The Analysis panel provides:
+- **Performance Score** (0-100): Composite of memory efficiency, branch uniformity, and register pressure
+- **Compute/Memory Ratio**: Whether the kernel is compute-bound or memory-bound
+- **Register Pressure**: How many of 13 GPRs are used
+- **Estimated Cycles**: Pipeline-aware cycle estimate
+
+### Interactive Thread Debugger
+
+Click any thread in the simulator to open a detailed register view showing:
+- All 16 registers (R0-R15) with live values
+- NZP condition flags (Negative/Zero/Positive)
+- Current PC and instruction
+- Special register labels (BID, BDM, TID)
 
 ---
 
@@ -226,6 +291,9 @@ Each instruction is 16 bits wide, divided into four 4-bit fields:
 | `0111` | LDR | `0111 rd-- rs-- ----` | rd = mem[rs] |
 | `1000` | STR | `1000 ---- rs-- rt--` | mem[rs] = rt |
 | `1001` | CONST | `1001 rd-- imm-----` | rd = 8-bit immediate |
+| `1010` | SLDR | `1010 rd-- rs-- ----` | rd = shared_mem[rs] |
+| `1011` | SSTR | `1011 ---- rs-- rt--` | shared_mem[rs] = rt |
+| `1100` | BAR | `1100 ---- ---- ----` | Thread barrier (syncthreads) |
 | `1111` | RET | `1111 ---- ---- ----` | Thread done |
 
 ### Register File
@@ -244,6 +312,7 @@ Each instruction is 16 bits wide, divided into four 4-bit fields:
 | Data width | 8 bits |
 | Instruction width | 16 bits |
 | Data memory | 256 bytes |
+| Shared memory | 64 bytes per block |
 | Program memory | 256 entries |
 | Execution model | SIMD lockstep within blocks, sequential block dispatch |
 
@@ -251,7 +320,7 @@ Each instruction is 16 bits wide, divided into four 4-bit fields:
 
 ## TinyGPU MLIR Dialect
 
-The compiler defines a custom MLIR dialect with 15 operations, each mapping directly to hardware capabilities:
+The compiler defines a custom MLIR dialect with 18 operations, each mapping directly to hardware capabilities:
 
 | Operation | Signature | Hardware Mapping |
 |-----------|-----------|------------------|
@@ -265,6 +334,9 @@ The compiler defines a custom MLIR dialect with 15 operations, each mapping dire
 | `tinygpu.div` | `i8, i8 -> i8` | DIV opcode |
 | `tinygpu.load` | `i8 -> i8` | LDR opcode |
 | `tinygpu.store` | `i8, i8 -> ()` | STR opcode |
+| `tinygpu.shared_load` | `i8 -> i8` | SLDR opcode |
+| `tinygpu.shared_store` | `i8, i8 -> ()` | SSTR opcode |
+| `tinygpu.barrier` | `-> ()` | BAR opcode |
 | `tinygpu.const` | `attr -> i8` | CONST opcode |
 | `tinygpu.cmp` | `i8, i8 -> i8` | CMP opcode (sets NZP flags) |
 | `tinygpu.branch` | `i8, attr, successor` | BRnzp opcode |
@@ -301,14 +373,14 @@ tgc --emit trace examples/vector_add.tgc
 | Kernel | Description | Instructions | Key Concepts |
 |--------|-------------|-------------|--------------|
 | [`vector_add.tgc`](examples/vector_add.tgc) | `c[i] = a[i] + b[i]` | 11 | Basic parallel kernel, memory addressing |
+| [`shared_tile_add.tgc`](examples/shared_tile_add.tgc) | Tiled add with shared memory | ~15 | **Shared memory**, `__syncthreads`, tiling pattern |
+| [`shared_reduce.tgc`](examples/shared_reduce.tgc) | Parallel tree reduction | ~18 | **Shared memory**, multiple barriers, thread masking |
 | [`dot_product.tgc`](examples/dot_product.tgc) | `c[i] = a[i] * b[i]` | 11 | Per-element multiply for reduction |
 | [`saxpy.tgc`](examples/saxpy.tgc) | `y[i] = a * x[i] + y[i]` | 14 | BLAS Level 1, scalar parameter loading |
-| [`relu.tgc`](examples/relu.tgc) | `max(0, input[i])` | 15 | Conditional branching (if/else), neural network activation |
-| [`vector_max.tgc`](examples/vector_max.tgc) | `max(a[i], b[i])` | 16 | Element-wise comparison with control flow |
+| [`relu.tgc`](examples/relu.tgc) | `max(0, input[i])` | 15 | Conditional branching (if/else), **divergence** |
+| [`vector_max.tgc`](examples/vector_max.tgc) | `max(a[i], b[i])` | 16 | Element-wise comparison, **divergent branches** |
 | [`conv1d.tgc`](examples/conv1d.tgc) | 1D convolution with sliding kernel | 22 | For-loops, accumulation, register reuse |
-| [`matrix_add.tgc`](examples/matrix_add.tgc) | Element-wise matrix addition | 11 | Same as vector_add, different interpretation |
 | [`matrix_multiply.tgc`](examples/matrix_multiply.tgc) | Full matrix multiply with loop | 28 | For-loops, multi-register allocation |
-| [`vector_reduction.tgc`](examples/vector_reduction.tgc) | Conditional filtering | ~15 | If/else control flow |
 
 ---
 
@@ -319,7 +391,7 @@ tiny-gpu-compiler/
   include/tiny-gpu-compiler/
     Dialect/TinyGPU/
       TinyGPUDialect.td          # Dialect definition (TableGen)
-      TinyGPUOps.td              # 15 operations (TableGen ODS)
+      TinyGPUOps.td              # 18 operations (TableGen ODS)
       TinyGPUDialect.h           # Generated dialect interface
       TinyGPUOps.h               # Generated operation interfaces
     Frontend/
@@ -329,27 +401,32 @@ tiny-gpu-compiler/
       MLIRGen.h                  # AST to MLIR conversion
     CodeGen/
       RegisterAllocator.h        # Linear scan register allocator
-      TinyGPUEmitter.h           # Binary emission and trace output
+      TinyGPUEmitter.h           # Binary emission, trace output, analysis
+    Passes/
+      Passes.h                   # Optimization passes interface
     Pipeline/
       Pipeline.h                 # End-to-end compilation orchestration
   lib/
     Dialect/TinyGPU/             # Dialect and operation implementations
     Frontend/                    # Lexer, parser, MLIR generation
     CodeGen/                     # Register allocation, binary emission
-    Pipeline/                    # Pipeline driver
+    Passes/                      # Constant folding, DCE, CSE, strength reduction
+    Pipeline/                    # Pipeline driver with analysis
   tools/tgc/
     tgc.cpp                      # Command-line compiler driver
   web/
     src/
       compiler/TGCCompiler.ts    # In-browser compiler (TypeScript)
-      simulator/TinyGPUSim.ts    # Cycle-accurate GPU simulator
+      compiler/types.ts          # Shared types (instructions, analysis, simulation)
+      simulator/TinyGPUSim.ts    # Cycle-accurate GPU simulator with shared mem
       components/
         Editor.tsx               # Monaco editor with .tgc highlighting
-        PipelineView.tsx         # Compilation stage viewer
+        PipelineView.tsx         # Compilation stage viewer (5 stages)
         BinaryView.tsx           # Color-coded binary instruction view
-        GPUSimulator.tsx         # Interactive GPU execution viewer
+        GPUSimulator.tsx         # Interactive GPU execution + debugger
+        AnalysisPanel.tsx        # Divergence, coalescing, performance profiling
       examples/index.ts          # Pre-loaded example kernels
-  examples/                      # .tgc source files
+  examples/                      # .tgc source files (including shared memory examples)
   test/                          # LLVM lit tests
   Dockerfile                     # Reproducible build with LLVM/MLIR
 ```
@@ -414,14 +491,21 @@ npm run dev
 
 ## Roadmap
 
-- [x] TinyGPU MLIR dialect (15 operations defined in TableGen)
+- [x] TinyGPU MLIR dialect (18 operations defined in TableGen)
 - [x] Frontend compiler (lexer, parser, AST, MLIR generation)
 - [x] Register allocator (linear scan, 13 GPRs)
-- [x] Binary emitter (16-bit ISA encoding)
+- [x] Binary emitter (16-bit ISA encoding, 14 instructions)
 - [x] Interactive web visualizer with in-browser compiler and GPU simulator
+- [x] Shared memory + `__syncthreads()` barrier synchronization
+- [x] Optimization passes (constant folding, DCE, strength reduction, CSE)
+- [x] Warp divergence analysis and visualization
+- [x] Memory coalescing analysis
+- [x] Performance profiling (compute/memory ratio, register pressure, cycle estimation)
+- [x] Interactive thread debugger (per-thread register inspection)
 - [ ] CIRCT backend (generate custom accelerator Verilog via `tinygpu` -> `hw` + `comb` + `seq` lowering)
 - [ ] WASM compilation (run the C++ MLIR compiler entirely in the browser via Emscripten)
 - [ ] Hardware architecture overlay (show datapath schematic alongside execution)
+- [ ] Tiled matrix multiply with shared memory (automated tiling pass)
 
 ---
 
@@ -433,10 +517,13 @@ This project implements a simplified version of what production GPU compilers do
 |---------|-------------------|-------------------------------|
 | **IR Framework** | MLIR (TinyGPU dialect) | LLVM IR / NVVM / PTX |
 | **Register Allocation** | Linear scan, 13 registers | Graph coloring, thousands of registers |
-| **Memory Model** | Flat 256-byte address space | Global/shared/local/constant memory hierarchy |
+| **Memory Model** | Global (256B) + Shared (64B) | Global/shared/local/constant memory hierarchy |
+| **Synchronization** | `__syncthreads()` barrier | `__syncthreads()`, `__syncwarp()`, atomics |
+| **Optimization** | Constant fold, DCE, CSE, strength reduction | Hundreds of passes, loop tiling, vectorization |
 | **Instruction Width** | 16-bit fixed | 64-bit+ variable-length |
 | **Thread Model** | Lockstep SIMD within blocks | Warps of 32 threads, independent scheduling |
 | **Data Width** | 8-bit unsigned | 32/64-bit float and integer |
+| **Analysis** | Divergence + coalescing analysis | Full occupancy calculator, memory throughput |
 
 The fundamental compilation stages are the same. The simplifications make each stage understandable without losing the essential structure.
 
@@ -446,7 +533,7 @@ The fundamental compilation stages are the same. The simplifications make each s
 
 - [tiny-gpu](https://github.com/adam-maj/tiny-gpu) by Adam Majmudar -- the Verilog hardware that this compiler targets
 - [MLIR](https://mlir.llvm.org/) / [LLVM Project](https://llvm.org/) -- the compiler infrastructure foundation
-- [CIRCT](https://github.com/llvm/circt) -- hardware compiler framework (planned for Phase 3)
+- [CIRCT](https://github.com/llvm/circt) -- hardware compiler framework (planned for future phase)
 
 ## License
 

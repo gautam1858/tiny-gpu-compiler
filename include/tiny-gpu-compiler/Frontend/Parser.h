@@ -25,6 +25,8 @@ private:
   std::unique_ptr<Stmt> parseAssignmentOrExpr();
   std::unique_ptr<ForStmt> parseForStmt();
   std::unique_ptr<IfStmt> parseIfStmt();
+  std::unique_ptr<SharedVarDeclStmt> parseSharedVarDecl();
+  std::unique_ptr<SyncThreadsStmt> parseSyncThreads();
   std::vector<std::unique_ptr<Stmt>> parseBlock();
 
   // Expressions (precedence climbing)

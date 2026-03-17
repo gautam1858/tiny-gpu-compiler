@@ -13,11 +13,13 @@ def TinyGPU_Dialect : Dialect {
     high-level GPU kernels to binary instructions.
 
     The tiny-gpu processor features:
-    - 11 instructions (16-bit encoding)
+    - 14 instructions (16-bit encoding)
     - 13 general-purpose 8-bit registers (R0-R12)
     - 3 read-only special registers (R13=%blockIdx, R14=%blockDim, R15=%threadIdx)
     - 256-byte data memory, 256-entry program memory
+    - 64-byte shared memory per block (fast, low-latency scratchpad)
     - SIMD-like execution: all threads in a block run in lockstep
+    - Barrier synchronization (__syncthreads) for shared memory coordination
   }];
   let cppNamespace = "::mlir::tinygpu";
   let useDefaultTypePrinterParser = 1;

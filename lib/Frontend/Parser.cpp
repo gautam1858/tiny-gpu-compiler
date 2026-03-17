@@ -120,6 +120,10 @@ std::vector<std::unique_ptr<Stmt>> Parser::parseBlock() {
 std::unique_ptr<Stmt> Parser::parseStatement() {
   if (check(TokenKind::Int))
     return parseVarDecl();
+  if (check(TokenKind::Shared))
+    return parseSharedVarDecl();
+  if (check(TokenKind::SyncThreads))
+    return parseSyncThreads();
   if (check(TokenKind::For))
     return parseForStmt();
   if (check(TokenKind::If))
@@ -204,6 +208,28 @@ std::unique_ptr<IfStmt> Parser::parseIfStmt() {
   }
 
   return stmt;
+}
+
+std::unique_ptr<SharedVarDeclStmt> Parser::parseSharedVarDecl() {
+  Location loc = currentLoc();
+  consume(TokenKind::Shared, "expected 'shared'");
+  consume(TokenKind::Int, "expected 'int'");
+  Token name = consume(TokenKind::Identifier, "expected array name");
+  consume(TokenKind::LBracket, "expected '['");
+  Token size = consume(TokenKind::IntLiteral, "expected array size");
+  consume(TokenKind::RBracket, "expected ']'");
+  consume(TokenKind::Semicolon, "expected ';'");
+  return std::make_unique<SharedVarDeclStmt>(name.text, std::stoi(size.text),
+                                              loc);
+}
+
+std::unique_ptr<SyncThreadsStmt> Parser::parseSyncThreads() {
+  Location loc = currentLoc();
+  consume(TokenKind::SyncThreads, "expected '__syncthreads'");
+  consume(TokenKind::LParen, "expected '('");
+  consume(TokenKind::RParen, "expected ')'");
+  consume(TokenKind::Semicolon, "expected ';'");
+  return std::make_unique<SyncThreadsStmt>(loc);
 }
 
 //===----------------------------------------------------------------------===//

@@ -1,0 +1,26 @@
+// Tiled vector addition using shared memory
+// Demonstrates: shared memory declaration, load/store, __syncthreads barrier
+//
+// Each block loads its tile into shared memory, synchronizes,
+// then computes from the fast shared scratchpad instead of slow global memory.
+// This pattern is fundamental to GPU performance optimization.
+
+kernel shared_tile_add(global int* a, global int* b, global int* c) {
+    shared int tile_a[4];
+    shared int tile_b[4];
+
+    int idx = blockIdx * blockDim + threadIdx;
+
+    // Load tile from global memory into shared memory
+    tile_a[threadIdx] = a[idx];
+    tile_b[threadIdx] = b[idx];
+
+    // Ensure all threads have finished loading
+    __syncthreads();
+
+    // Compute from shared memory (fast!)
+    int sum = tile_a[threadIdx] + tile_b[threadIdx];
+
+    // Write result back to global memory
+    c[idx] = sum;
+}

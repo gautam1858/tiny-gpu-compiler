@@ -22,6 +22,7 @@ enum class ExprKind {
   BuiltinVar,
   BinaryOp,
   ArrayIndex,
+  SharedArrayIndex,
 };
 
 struct Expr {
@@ -79,6 +80,17 @@ struct ArrayIndexExpr : Expr {
   }
 };
 
+struct SharedArrayIndexExpr : Expr {
+  std::string array;
+  std::unique_ptr<Expr> index;
+  SharedArrayIndexExpr(std::string array, std::unique_ptr<Expr> index,
+                       Location loc)
+      : array(std::move(array)), index(std::move(index)) {
+    kind = ExprKind::SharedArrayIndex;
+    this->loc = loc;
+  }
+};
+
 //===----------------------------------------------------------------------===//
 // Statements
 //===----------------------------------------------------------------------===//
@@ -87,6 +99,9 @@ enum class StmtKind {
   VarDecl,
   Assignment,
   ArrayStore,
+  SharedVarDecl,
+  SharedArrayStore,
+  SyncThreads,
   For,
   If,
   ExprStmt,
@@ -131,6 +146,36 @@ struct ArrayStoreStmt : Stmt {
   }
 };
 
+struct SharedVarDeclStmt : Stmt {
+  std::string name;
+  int size; // array size
+  SharedVarDeclStmt(std::string name, int size, Location loc)
+      : name(std::move(name)), size(size) {
+    kind = StmtKind::SharedVarDecl;
+    this->loc = loc;
+  }
+};
+
+struct SharedArrayStoreStmt : Stmt {
+  std::string array;
+  std::unique_ptr<Expr> index;
+  std::unique_ptr<Expr> value;
+  SharedArrayStoreStmt(std::string array, std::unique_ptr<Expr> index,
+                       std::unique_ptr<Expr> value, Location loc)
+      : array(std::move(array)), index(std::move(index)),
+        value(std::move(value)) {
+    kind = StmtKind::SharedArrayStore;
+    this->loc = loc;
+  }
+};
+
+struct SyncThreadsStmt : Stmt {
+  SyncThreadsStmt(Location loc) {
+    kind = StmtKind::SyncThreads;
+    this->loc = loc;
+  }
+};
+
 struct ForStmt : Stmt {
   std::unique_ptr<VarDeclStmt> init;
   std::unique_ptr<Expr> condition;
@@ -167,6 +212,7 @@ struct KernelDef {
   std::string name;
   std::vector<KernelParam> params;
   std::vector<std::unique_ptr<Stmt>> body;
+  std::vector<std::string> sharedArrays; // names of shared memory arrays
   Location loc;
 };
 

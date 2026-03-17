@@ -27,26 +27,29 @@ export function PipelineView({ stages, source }: PipelineViewProps) {
           flexShrink: 0,
         }}
       >
-        {allStages.map((stage, i) => (
-          <button
-            key={i}
-            onClick={() => setSelectedStage(i)}
-            style={{
-              padding: '6px 12px',
-              fontSize: '11px',
-              fontWeight: selectedStage === i ? 700 : 400,
-              background: selectedStage === i ? '#2d5a3d' : '#1a1a2e',
-              color: selectedStage === i ? '#7fff7f' : '#888',
-              border: selectedStage === i ? '1px solid #4a8a5a' : '1px solid #333',
-              borderRadius: '4px',
-              cursor: 'pointer',
-              whiteSpace: 'nowrap',
-              transition: 'all 0.15s',
-            }}
-          >
-            {i === 0 ? '\u2460' : i === 1 ? '\u2461' : '\u2462'} {stage.name}
-          </button>
-        ))}
+        {allStages.map((stage, i) => {
+          const circled = ['\u2460', '\u2461', '\u2462', '\u2463', '\u2464'];
+          return (
+            <button
+              key={i}
+              onClick={() => setSelectedStage(i)}
+              style={{
+                padding: '6px 12px',
+                fontSize: '11px',
+                fontWeight: selectedStage === i ? 700 : 400,
+                background: selectedStage === i ? '#2d5a3d' : '#1a1a2e',
+                color: selectedStage === i ? '#7fff7f' : '#888',
+                border: selectedStage === i ? '1px solid #4a8a5a' : '1px solid #333',
+                borderRadius: '4px',
+                cursor: 'pointer',
+                whiteSpace: 'nowrap',
+                transition: 'all 0.15s',
+              }}
+            >
+              {circled[i] || `(${i + 1})`} {stage.name}
+            </button>
+          );
+        })}
       </div>
 
       {/* Arrow indicator */}

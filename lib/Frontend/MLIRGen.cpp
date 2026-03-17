@@ -53,6 +53,10 @@ private:
   // Kernel parameter base addresses (for global int* params)
   llvm::StringMap<int> paramBaseAddrs;
 
+  // Shared memory base addresses (for shared int arrays)
+  llvm::StringMap<int> sharedBaseAddrs;
+  llvm::StringSet<> sharedNames;
+
   // Owned strings for symbol table keys
   std::vector<std::unique_ptr<std::string>> ownedNames;
 
@@ -100,6 +104,19 @@ private:
       }
     }
 
+    // First pass: collect shared memory declarations
+    sharedBaseAddrs.clear();
+    sharedNames.clear();
+    int sharedOffset = 0;
+    for (auto &stmt : kernel.body) {
+      if (stmt->kind == StmtKind::SharedVarDecl) {
+        auto &decl = static_cast<const SharedVarDeclStmt &>(*stmt);
+        sharedBaseAddrs[decl.name] = sharedOffset;
+        sharedNames.insert(decl.name);
+        sharedOffset += decl.size;
+      }
+    }
+
     // Generate body
     for (auto &stmt : kernel.body) {
       if (failed(genStmt(*stmt)))
@@ -124,6 +141,14 @@ private:
       return genAssignment(static_cast<const AssignmentStmt &>(stmt));
     case StmtKind::ArrayStore:
       return genArrayStore(static_cast<const ArrayStoreStmt &>(stmt));
+    case StmtKind::SharedVarDecl:
+      return success(); // handled in first pass
+    case StmtKind::SharedArrayStore:
+      return genSharedArrayStore(
+          static_cast<const SharedArrayStoreStmt &>(stmt));
+    case StmtKind::SyncThreads:
+      builder.create<tinygpu::BarrierOp>(loc(stmt.loc));
+      return success();
     case StmtKind::For:
       return genFor(static_cast<const ForStmt &>(stmt));
     case StmtKind::If:
@@ -156,6 +181,21 @@ private:
     if (!index || !value)
       return failure();
 
+    // Check if this is a shared memory array
+    if (sharedNames.count(stmt.array)) {
+      auto it = sharedBaseAddrs.find(stmt.array);
+      Value addr;
+      if (it->second == 0) {
+        addr = index;
+      } else {
+        auto base = builder.create<tinygpu::ConstOp>(loc(stmt.loc),
+                                                      (uint8_t)it->second);
+        addr = builder.create<tinygpu::AddOp>(loc(stmt.loc), base, index);
+      }
+      builder.create<tinygpu::SharedStoreOp>(loc(stmt.loc), addr, value);
+      return success();
+    }
+
     // Compute address: base + index
     auto it = paramBaseAddrs.find(stmt.array);
     if (it == paramBaseAddrs.end()) {
@@ -173,6 +213,31 @@ private:
     }
 
     builder.create<tinygpu::StoreOp>(loc(stmt.loc), addr, value);
+    return success();
+  }
+
+  LogicalResult genSharedArrayStore(const SharedArrayStoreStmt &stmt) {
+    auto index = genExpr(*stmt.index);
+    auto value = genExpr(*stmt.value);
+    if (!index || !value)
+      return failure();
+
+    auto it = sharedBaseAddrs.find(stmt.array);
+    if (it == sharedBaseAddrs.end()) {
+      llvm::errs() << "unknown shared array: " << stmt.array << "\n";
+      return failure();
+    }
+
+    Value addr;
+    if (it->second == 0) {
+      addr = index;
+    } else {
+      auto base =
+          builder.create<tinygpu::ConstOp>(loc(stmt.loc), (uint8_t)it->second);
+      addr = builder.create<tinygpu::AddOp>(loc(stmt.loc), base, index);
+    }
+
+    builder.create<tinygpu::SharedStoreOp>(loc(stmt.loc), addr, value);
     return success();
   }
 
@@ -292,6 +357,9 @@ private:
       return genBinaryOp(static_cast<const BinaryOpExpr &>(expr));
     case ExprKind::ArrayIndex:
       return genArrayIndex(static_cast<const ArrayIndexExpr &>(expr));
+    case ExprKind::SharedArrayIndex:
+      return genSharedArrayIndex(
+          static_cast<const SharedArrayIndexExpr &>(expr));
     }
     llvm_unreachable("unhandled expr kind");
   }
@@ -359,6 +427,20 @@ private:
     if (!index)
       return nullptr;
 
+    // Check if this is a shared memory array
+    if (sharedNames.count(expr.array)) {
+      auto it = sharedBaseAddrs.find(expr.array);
+      Value addr;
+      if (it->second == 0) {
+        addr = index;
+      } else {
+        auto base = builder.create<tinygpu::ConstOp>(loc(expr.loc),
+                                                      (uint8_t)it->second);
+        addr = builder.create<tinygpu::AddOp>(loc(expr.loc), base, index);
+      }
+      return builder.create<tinygpu::SharedLoadOp>(loc(expr.loc), addr);
+    }
+
     auto it = paramBaseAddrs.find(expr.array);
     if (it == paramBaseAddrs.end()) {
       llvm::errs() << "unknown array: " << expr.array << "\n";
@@ -375,6 +457,29 @@ private:
     }
 
     return builder.create<tinygpu::LoadOp>(loc(expr.loc), addr);
+  }
+
+  Value genSharedArrayIndex(const SharedArrayIndexExpr &expr) {
+    auto index = genExpr(*expr.index);
+    if (!index)
+      return nullptr;
+
+    auto it = sharedBaseAddrs.find(expr.array);
+    if (it == sharedBaseAddrs.end()) {
+      llvm::errs() << "unknown shared array: " << expr.array << "\n";
+      return nullptr;
+    }
+
+    Value addr;
+    if (it->second == 0) {
+      addr = index;
+    } else {
+      auto base =
+          builder.create<tinygpu::ConstOp>(loc(expr.loc), (uint8_t)it->second);
+      addr = builder.create<tinygpu::AddOp>(loc(expr.loc), base, index);
+    }
+
+    return builder.create<tinygpu::SharedLoadOp>(loc(expr.loc), addr);
   }
 };
 

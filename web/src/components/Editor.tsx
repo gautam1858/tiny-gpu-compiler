@@ -18,8 +18,8 @@ export function Editor({ value, onChange }: EditorProps) {
 
     // Syntax highlighting rules
     monaco.languages.setMonarchTokensProvider('tgc', {
-      keywords: ['kernel', 'global', 'int', 'for', 'if', 'else'],
-      builtins: ['threadIdx', 'blockIdx', 'blockDim'],
+      keywords: ['kernel', 'global', 'int', 'for', 'if', 'else', 'shared', '__shared__'],
+      builtins: ['threadIdx', 'blockIdx', 'blockDim', '__syncthreads'],
       operators: ['+', '-', '*', '/', '=', '==', '!=', '<', '>', '<=', '>='],
       tokenizer: {
         root: [

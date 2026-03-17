@@ -21,6 +21,9 @@ constexpr uint16_t DIV = 0b0110;
 constexpr uint16_t LDR = 0b0111;
 constexpr uint16_t STR = 0b1000;
 constexpr uint16_t CONST = 0b1001;
+constexpr uint16_t SLDR = 0b1010;
+constexpr uint16_t SSTR = 0b1011;
+constexpr uint16_t BAR = 0b1100;
 constexpr uint16_t RET = 0b1111;
 } // namespace Opcode
 
@@ -67,7 +70,8 @@ std::vector<Instruction> emitBinary(Operation *funcOp) {
       if (isa<tinygpu::AddOp, tinygpu::SubOp, tinygpu::MulOp, tinygpu::DivOp,
               tinygpu::LoadOp, tinygpu::StoreOp, tinygpu::ConstOp,
               tinygpu::CmpOp, tinygpu::ReturnOp, tinygpu::BranchOp,
-              tinygpu::JumpOp>(&op)) {
+              tinygpu::JumpOp, tinygpu::SharedLoadOp, tinygpu::SharedStoreOp,
+              tinygpu::BarrierOp>(&op)) {
         addr++;
       }
       // Special register reads (thread_id, block_id, block_dim) don't emit
@@ -155,6 +159,23 @@ std::vector<Instruction> emitBinary(Operation *funcOp) {
         int targetAddr = blockAddresses.lookup(target);
         inst.binary = encodeBranch(Opcode::BRnzp, 0b111, targetAddr);
         inst.assembly = "JMP #" + std::to_string(targetAddr);
+        instructions.push_back(inst);
+        addr++;
+      } else if (auto shLoadOp = dyn_cast<tinygpu::SharedLoadOp>(&op)) {
+        int rd = getReg(&op, "rd"), rs = getReg(&op, "rs");
+        inst.binary = encodeRRR(Opcode::SLDR, rd, rs, 0);
+        inst.assembly = "SLDR " + regName(rd) + ", [S+" + regName(rs) + "]";
+        instructions.push_back(inst);
+        addr++;
+      } else if (auto shStoreOp = dyn_cast<tinygpu::SharedStoreOp>(&op)) {
+        int rs = getReg(&op, "rs"), rt = getReg(&op, "rt");
+        inst.binary = encodeRRR(Opcode::SSTR, 0, rs, rt);
+        inst.assembly = "SSTR [S+" + regName(rs) + "], " + regName(rt);
+        instructions.push_back(inst);
+        addr++;
+      } else if (isa<tinygpu::BarrierOp>(&op)) {
+        inst.binary = encodeRRR(Opcode::BAR, 0, 0, 0);
+        inst.assembly = "BAR";
         instructions.push_back(inst);
         addr++;
       } else if (isa<tinygpu::ReturnOp>(&op)) {

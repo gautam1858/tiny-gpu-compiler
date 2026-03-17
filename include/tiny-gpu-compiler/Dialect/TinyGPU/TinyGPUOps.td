@@ -199,4 +199,42 @@ def TinyGPU_JumpOp : TinyGPU_Op<"jump", [Terminator]> {
   let assemblyFormat = "$target attr-dict";
 }
 
+//===----------------------------------------------------------------------===//
+// Shared memory operations
+//===----------------------------------------------------------------------===//
+
+def TinyGPU_SharedLoadOp : TinyGPU_Op<"shared_load"> {
+  let summary = "Load 8-bit value from shared memory";
+  let description = [{
+    Loads a value from the block's 64-byte shared memory at the given address.
+    Shared memory is fast, low-latency scratchpad visible to all threads in a block.
+    Maps to the SLDR instruction (opcode 1010).
+  }];
+  let arguments = (ins I8:$addr);
+  let results = (outs I8:$result);
+  let assemblyFormat = "$addr attr-dict `:` type($result)";
+}
+
+def TinyGPU_SharedStoreOp : TinyGPU_Op<"shared_store"> {
+  let summary = "Store 8-bit value to shared memory";
+  let description = [{
+    Stores a value to the block's 64-byte shared memory at the given address.
+    Shared memory is visible to all threads in a block after synchronization.
+    Maps to the SSTR instruction (opcode 1011).
+  }];
+  let arguments = (ins I8:$addr, I8:$value);
+  let assemblyFormat = "$addr `,` $value attr-dict `:` type($value)";
+}
+
+def TinyGPU_BarrierOp : TinyGPU_Op<"barrier"> {
+  let summary = "Block-level thread synchronization barrier";
+  let description = [{
+    Synchronizes all threads within a block. No thread may proceed past
+    this point until all threads in the block have reached it.
+    Essential for ensuring shared memory writes are visible to all threads.
+    Maps to the BAR instruction (opcode 1100).
+  }];
+  let assemblyFormat = "attr-dict";
+}
+
 #endif // TINYGPU_OPS_TD

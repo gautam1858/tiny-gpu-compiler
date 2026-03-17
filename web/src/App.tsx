@@ -3,18 +3,21 @@ import { Editor } from './components/Editor';
 import { PipelineView } from './components/PipelineView';
 import { BinaryView } from './components/BinaryView';
 import { GPUSimulator } from './components/GPUSimulator';
+import { AnalysisPanel } from './components/AnalysisPanel';
 import { compileTGC } from './compiler/TGCCompiler';
 import { EXAMPLES } from './examples';
 import { CompilationTrace, SimulationState } from './compiler/types';
+
+type RightPanel = 'simulator' | 'analysis';
 
 export default function App() {
   const [source, setSource] = useState(EXAMPLES[0].source);
   const [selectedExample, setSelectedExample] = useState(0);
   const [trace, setTrace] = useState<CompilationTrace>(EXAMPLES[0].trace);
   const [highlightAddr, setHighlightAddr] = useState<number | undefined>(undefined);
+  const [rightPanel, setRightPanel] = useState<RightPanel>('simulator');
   const compileTimeout = useRef<number | null>(null);
 
-  // Auto-compile on source change (debounced)
   const handleSourceChange = useCallback((newSource: string) => {
     setSource(newSource);
     if (compileTimeout.current) clearTimeout(compileTimeout.current);
@@ -24,20 +27,17 @@ export default function App() {
     }, 300);
   }, []);
 
-  // Switch example
   const handleExampleChange = useCallback((index: number) => {
     setSelectedExample(index);
     setSource(EXAMPLES[index].source);
     setTrace(EXAMPLES[index].trace);
   }, []);
 
-  // Track simulation PC for binary highlight
   const handleCycleChange = useCallback((state: SimulationState) => {
     const activeThread = state.threads.find((t) => !t.done);
     setHighlightAddr(activeThread?.pc);
   }, []);
 
-  // Initial compile
   useEffect(() => {
     setTrace(EXAMPLES[0].trace);
   }, []);
@@ -116,8 +116,8 @@ export default function App() {
         {/* Left: Editor */}
         <div
           style={{
-            width: '28%',
-            minWidth: '250px',
+            width: '25%',
+            minWidth: '240px',
             display: 'flex',
             flexDirection: 'column',
             borderRight: '1px solid #222',
@@ -166,6 +166,12 @@ export default function App() {
               }}
             >
               <span style={{ color: '#c586c0' }}>{'\u25CF'}</span> Compilation Pipeline
+              {trace.analysis?.metrics && (
+                <span style={{ marginLeft: 'auto', fontSize: '10px', color: '#4ec9b0' }}>
+                  {trace.analysis.metrics.totalInstructions} inst | {trace.analysis.metrics.registersUsed} regs
+                  {trace.analysis.metrics.sharedMemoryBytes > 0 && ` | ${trace.analysis.metrics.sharedMemoryBytes}B shared`}
+                </span>
+              )}
             </div>
             <div style={{ height: 'calc(100% - 28px)', overflow: 'hidden' }}>
               <PipelineView stages={trace.stages} source={source} />
@@ -215,7 +221,7 @@ export default function App() {
           </div>
         </div>
 
-        {/* Right: GPU Simulator */}
+        {/* Right: GPU Simulator / Analysis */}
         <div
           style={{
             width: '28%',
@@ -224,6 +230,7 @@ export default function App() {
             flexDirection: 'column',
           }}
         >
+          {/* Tab selector */}
           <div
             style={{
               padding: '6px 12px',
@@ -233,19 +240,50 @@ export default function App() {
               borderBottom: '1px solid #222',
               display: 'flex',
               alignItems: 'center',
-              gap: '6px',
+              gap: '4px',
             }}
           >
-            <span style={{ color: '#61afef' }}>{'\u25CF'}</span> GPU Execution
+            <button
+              onClick={() => setRightPanel('simulator')}
+              style={{
+                padding: '3px 10px',
+                fontSize: '11px',
+                background: rightPanel === 'simulator' ? '#2d5a3d' : 'transparent',
+                color: rightPanel === 'simulator' ? '#7fff7f' : '#888',
+                border: rightPanel === 'simulator' ? '1px solid #4a8a5a' : '1px solid transparent',
+                borderRadius: '4px',
+                cursor: 'pointer',
+              }}
+            >
+              <span style={{ color: '#61afef' }}>{'\u25CF'}</span> GPU Execution
+            </button>
+            <button
+              onClick={() => setRightPanel('analysis')}
+              style={{
+                padding: '3px 10px',
+                fontSize: '11px',
+                background: rightPanel === 'analysis' ? '#2d5a3d' : 'transparent',
+                color: rightPanel === 'analysis' ? '#7fff7f' : '#888',
+                border: rightPanel === 'analysis' ? '1px solid #4a8a5a' : '1px solid transparent',
+                borderRadius: '4px',
+                cursor: 'pointer',
+              }}
+            >
+              <span style={{ color: '#e5c07b' }}>{'\u25CF'}</span> Analysis
+            </button>
           </div>
           <div style={{ flex: 1, overflow: 'hidden' }}>
-            <GPUSimulator
-              instructions={trace.binary.instructions}
-              initialMemory={example.initialMemory}
-              numBlocks={example.numBlocks}
-              threadsPerBlock={example.threadsPerBlock}
-              onCycleChange={handleCycleChange}
-            />
+            {rightPanel === 'simulator' ? (
+              <GPUSimulator
+                instructions={trace.binary.instructions}
+                initialMemory={example.initialMemory}
+                numBlocks={example.numBlocks}
+                threadsPerBlock={example.threadsPerBlock}
+                onCycleChange={handleCycleChange}
+              />
+            ) : (
+              <AnalysisPanel analysis={trace.analysis} />
+            )}
           </div>
         </div>
       </div>
@@ -273,7 +311,7 @@ export default function App() {
           >
             tiny-gpu
           </a>{' '}
-          hardware
+          hardware | Shared memory + barriers + divergence analysis
         </span>
         <span>
           8-bit data | 16-bit instructions | {trace.binary.instructions.length} ops compiled

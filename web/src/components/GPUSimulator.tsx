@@ -17,6 +17,7 @@ const STAGE_COLORS: Record<string, string> = {
   [PipelineStage.WAIT]: '#98c379',
   [PipelineStage.EXECUTE]: '#61afef',
   [PipelineStage.UPDATE]: '#c678dd',
+  [PipelineStage.BARRIER]: '#4ec9b0',
   [PipelineStage.DONE]: '#555',
 };
 
@@ -31,17 +32,17 @@ export function GPUSimulator({
   const [currentStep, setCurrentStep] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [speed, setSpeed] = useState(500);
+  const [selectedThread, setSelectedThread] = useState<number | null>(null);
   const intervalRef = useRef<number | null>(null);
 
-  // Initialize simulation when instructions change
   useEffect(() => {
     if (instructions.length === 0) return;
-
     const sim = new TinyGPUSim(instructions, initialMemory, numBlocks, threadsPerBlock);
     const allStates = sim.runToEnd(5000);
     setHistory(allStates);
     setCurrentStep(0);
     setIsPlaying(false);
+    setSelectedThread(null);
   }, [instructions, initialMemory, numBlocks, threadsPerBlock]);
 
   const state = history[currentStep];
@@ -50,7 +51,6 @@ export function GPUSimulator({
     if (state && onCycleChange) onCycleChange(state);
   }, [currentStep, state, onCycleChange]);
 
-  // Playback timer
   useEffect(() => {
     if (isPlaying && history.length > 0) {
       intervalRef.current = window.setInterval(() => {
@@ -81,6 +81,11 @@ export function GPUSimulator({
     setIsPlaying(false);
   }, []);
 
+  const jumpToEnd = useCallback(() => {
+    setCurrentStep(history.length - 1);
+    setIsPlaying(false);
+  }, [history.length]);
+
   if (!state || instructions.length === 0) {
     return (
       <div style={{ padding: '16px', color: '#666', fontSize: '13px' }}>
@@ -89,6 +94,10 @@ export function GPUSimulator({
     );
   }
 
+  const selectedThreadState = selectedThread !== null
+    ? state.threads.find(t => t.threadId === selectedThread)
+    : null;
+
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', gap: '8px' }}>
       {/* Controls */}
@@ -96,11 +105,12 @@ export function GPUSimulator({
         style={{
           display: 'flex',
           alignItems: 'center',
-          gap: '8px',
+          gap: '6px',
           padding: '8px',
           background: '#111',
           borderRadius: '4px',
           flexShrink: 0,
+          flexWrap: 'wrap',
         }}
       >
         <button onClick={reset} style={btnStyle} title="Reset">
@@ -118,6 +128,9 @@ export function GPUSimulator({
         </button>
         <button onClick={stepForward} style={btnStyle} title="Step Forward">
           {'\u23E9'}
+        </button>
+        <button onClick={jumpToEnd} style={btnStyle} title="Jump to End">
+          {'\u23ED'}
         </button>
 
         <div style={{ flex: 1 }} />
@@ -153,11 +166,35 @@ export function GPUSimulator({
         style={{ width: '100%', flexShrink: 0 }}
       />
 
-      {/* Block info */}
-      <div style={{ fontSize: '11px', color: '#888', padding: '0 4px', flexShrink: 0 }}>
-        Block {state.currentBlock} / {state.totalBlocks}
+      {/* Block info + divergence indicator */}
+      <div style={{ fontSize: '11px', color: '#888', padding: '0 4px', flexShrink: 0, display: 'flex', gap: '8px', alignItems: 'center' }}>
+        <span>Block {state.currentBlock} / {state.totalBlocks}</span>
         {state.currentBlock >= state.totalBlocks && (
-          <span style={{ color: '#4ec9b0', marginLeft: '8px' }}>DONE</span>
+          <span style={{ color: '#4ec9b0' }}>DONE</span>
+        )}
+        {state.threads.some(t => t.divergent) && (
+          <span style={{
+            color: '#e06c75',
+            padding: '1px 6px',
+            background: '#3a2020',
+            borderRadius: '3px',
+            fontSize: '9px',
+            fontWeight: 700,
+          }}>
+            DIVERGENT
+          </span>
+        )}
+        {state.threads.some(t => t.stage === PipelineStage.BARRIER) && (
+          <span style={{
+            color: '#4ec9b0',
+            padding: '1px 6px',
+            background: '#1a3a3a',
+            borderRadius: '3px',
+            fontSize: '9px',
+            fontWeight: 700,
+          }}>
+            BARRIER
+          </span>
         )}
       </div>
 
@@ -172,9 +209,57 @@ export function GPUSimulator({
           }}
         >
           {state.threads.map((thread) => (
-            <ThreadCard key={`${thread.blockId}-${thread.threadId}`} thread={thread} />
+            <ThreadCard
+              key={`${thread.blockId}-${thread.threadId}`}
+              thread={thread}
+              selected={selectedThread === thread.threadId}
+              onClick={() => setSelectedThread(selectedThread === thread.threadId ? null : thread.threadId)}
+            />
           ))}
         </div>
+
+        {/* Selected thread detail (debugger view) */}
+        {selectedThreadState && (
+          <div style={{ margin: '8px 4px', padding: '8px', background: '#1a1a2e', border: '1px solid #4ec9b0', borderRadius: '6px' }}>
+            <div style={{ fontSize: '11px', color: '#4ec9b0', fontWeight: 700, marginBottom: '6px' }}>
+              Thread {selectedThreadState.threadId} Register File
+            </div>
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(4, 1fr)',
+              gap: '4px',
+              fontSize: '10px',
+              fontFamily: 'monospace',
+            }}>
+              {selectedThreadState.registers.map((val, r) => (
+                <div key={r} style={{
+                  padding: '3px 4px',
+                  background: r === 13 || r === 14 || r === 15 ? '#2a2a4a' : val !== 0 ? '#1a2a1a' : '#111',
+                  borderRadius: '3px',
+                  color: r >= 13 ? '#c586c0' : val !== 0 ? '#98c379' : '#444',
+                }}>
+                  <span style={{ color: '#888' }}>
+                    {r === 13 ? 'BID' : r === 14 ? 'BDM' : r === 15 ? 'TID' : `R${r}`}
+                  </span>
+                  {' '}{val}
+                </div>
+              ))}
+            </div>
+            <div style={{ marginTop: '4px', fontSize: '10px', color: '#888' }}>
+              PC: <span style={{ color: '#b5cea8' }}>{selectedThreadState.pc}</span>
+              {' | '}NZP: <span style={{ color: '#d19a66' }}>
+                {((selectedThreadState.nzp >> 2) & 1) ? 'N' : '-'}
+                {((selectedThreadState.nzp >> 1) & 1) ? 'Z' : '-'}
+                {(selectedThreadState.nzp & 1) ? 'P' : '-'}
+              </span>
+              {selectedThreadState.currentInstruction && (
+                <>
+                  {' | '}<span style={{ color: '#c586c0' }}>{selectedThreadState.currentInstruction}</span>
+                </>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Memory visualization */}
         <div style={{ marginTop: '12px', padding: '4px' }}>
@@ -183,41 +268,100 @@ export function GPUSimulator({
           </div>
           <MemoryHeatmap memory={state.memory} />
         </div>
+
+        {/* Shared Memory visualization */}
+        {state.sharedMemory.some(v => v !== 0) && (
+          <div style={{ marginTop: '8px', padding: '4px' }}>
+            <div style={{ fontSize: '11px', color: '#4ec9b0', marginBottom: '4px' }}>
+              Shared Memory (64 bytes)
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1px' }}>
+              {state.sharedMemory.slice(0, 32).map((val, i) => (
+                <div
+                  key={i}
+                  style={{
+                    width: '20px',
+                    height: '18px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: '9px',
+                    fontFamily: 'monospace',
+                    background: val > 0
+                      ? `#4ec9b0${Math.min(Math.floor(val / 255 * 200) + 55, 255).toString(16).padStart(2, '0')}`
+                      : '#1a1a2e',
+                    color: val > 0 ? '#fff' : '#333',
+                    borderRadius: '2px',
+                    border: '1px solid #222',
+                  }}
+                  title={`[S${i}] = ${val}`}
+                >
+                  {val}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
 }
 
-function ThreadCard({ thread }: { thread: import('../compiler/types').ThreadState }) {
+function ThreadCard({
+  thread,
+  selected,
+  onClick,
+}: {
+  thread: import('../compiler/types').ThreadState;
+  selected: boolean;
+  onClick: () => void;
+}) {
   const stageColor = STAGE_COLORS[thread.stage] || '#555';
 
   return (
     <div
+      onClick={onClick}
       style={{
         background: '#1a1a2e',
-        border: `1px solid ${thread.done ? '#333' : stageColor}`,
+        border: `1px solid ${selected ? '#4ec9b0' : thread.divergent ? '#e06c75' : thread.done ? '#333' : stageColor}`,
         borderRadius: '6px',
         padding: '8px',
         fontSize: '11px',
         fontFamily: 'monospace',
         opacity: thread.done ? 0.5 : 1,
         transition: 'all 0.15s',
+        cursor: 'pointer',
+        boxShadow: selected ? '0 0 8px #4ec9b044' : thread.divergent ? '0 0 4px #e06c7533' : 'none',
       }}
     >
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
         <span style={{ color: '#9cdcfe' }}>T{thread.threadId}</span>
-        <span
-          style={{
-            background: stageColor,
-            color: '#fff',
-            padding: '1px 6px',
-            borderRadius: '3px',
-            fontSize: '9px',
-            fontWeight: 700,
-          }}
-        >
-          {thread.stage}
-        </span>
+        <div style={{ display: 'flex', gap: '2px' }}>
+          {thread.divergent && (
+            <span style={{
+              background: '#3a2020',
+              color: '#e06c75',
+              padding: '1px 4px',
+              borderRadius: '3px',
+              fontSize: '8px',
+              fontWeight: 700,
+            }}>
+              DIV
+            </span>
+          )}
+          <span
+            style={{
+              background: stageColor,
+              color: '#fff',
+              padding: '1px 6px',
+              borderRadius: '3px',
+              fontSize: '9px',
+              fontWeight: 700,
+            }}
+          >
+            {thread.stage}
+          </span>
+        </div>
       </div>
 
       <div style={{ color: '#888', marginBottom: '4px' }}>
@@ -250,7 +394,6 @@ function ThreadCard({ thread }: { thread: import('../compiler/types').ThreadStat
 }
 
 function MemoryHeatmap({ memory }: { memory: number[] }) {
-  // Show first 192 bytes (3 regions of 64: A, B, C)
   const regions = [
     { name: 'A (0-63)', start: 0, end: 64, color: '#e06c75' },
     { name: 'B (64-127)', start: 64, end: 128, color: '#61afef' },

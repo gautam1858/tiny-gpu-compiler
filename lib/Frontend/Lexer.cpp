@@ -84,12 +84,16 @@ Token Lexer::lexIdentifierOrKeyword() {
     kind = TokenKind::If;
   else if (text == "else")
     kind = TokenKind::Else;
+  else if (text == "shared" || text == "__shared__")
+    kind = TokenKind::Shared;
   else if (text == "threadIdx")
     kind = TokenKind::ThreadIdx;
   else if (text == "blockIdx")
     kind = TokenKind::BlockIdx;
   else if (text == "blockDim")
     kind = TokenKind::BlockDim;
+  else if (text == "__syncthreads")
+    kind = TokenKind::SyncThreads;
 
   Token tok;
   tok.kind = kind;

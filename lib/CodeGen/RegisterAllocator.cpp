@@ -1,4 +1,5 @@
 #include "tiny-gpu-compiler/CodeGen/RegisterAllocator.h"
+#include "tiny-gpu-compiler/Dialect/TinyGPU/TinyGPUDialect.h"
 #include "tiny-gpu-compiler/Dialect/TinyGPU/TinyGPUOps.h"
 
 #include "mlir/IR/Builders.h"

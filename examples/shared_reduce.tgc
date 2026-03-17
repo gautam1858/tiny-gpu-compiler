@@ -1,0 +1,28 @@
+// Parallel reduction using shared memory
+// Demonstrates: tree-based reduction, multiple barriers, thread masking
+//
+// Classic GPU pattern: reduce N values to 1 using log2(N) steps.
+// Each step halves the active threads and accumulates partial sums
+// in shared memory. Barriers ensure correctness between steps.
+
+kernel shared_reduce(global int* input, global int* output) {
+    shared int scratch[4];
+
+    int idx = blockIdx * blockDim + threadIdx;
+
+    // Load data into shared memory
+    scratch[threadIdx] = input[idx];
+    __syncthreads();
+
+    // Tree reduction: stride 2
+    if (threadIdx < 2) {
+        scratch[threadIdx] = scratch[threadIdx] + scratch[threadIdx + 2];
+    }
+    __syncthreads();
+
+    // Tree reduction: stride 1
+    if (threadIdx < 1) {
+        scratch[0] = scratch[0] + scratch[1];
+        output[blockIdx] = scratch[0];
+    }
+}
