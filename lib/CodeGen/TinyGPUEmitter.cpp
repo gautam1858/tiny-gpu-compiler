@@ -132,7 +132,7 @@ std::vector<Instruction> emitBinary(Operation *funcOp) {
         addr++;
       } else if (auto constOp = dyn_cast<tinygpu::ConstOp>(&op)) {
         int rd = getReg(&op, "rd");
-        int imm = constOp.getValue().getZExtValue();
+        int imm = constOp.getValue();
         inst.binary = encodeRI(Opcode::CONST, rd, imm);
         inst.assembly =
             "CONST " + regName(rd) + ", #" + std::to_string(imm);
@@ -145,7 +145,7 @@ std::vector<Instruction> emitBinary(Operation *funcOp) {
         instructions.push_back(inst);
         addr++;
       } else if (auto branchOp = dyn_cast<tinygpu::BranchOp>(&op)) {
-        int nzp = branchOp.getConditionMask().getZExtValue();
+        int nzp = branchOp.getConditionMask();
         Block *target = branchOp.getTarget();
         int targetAddr = blockAddresses.lookup(target);
         inst.binary = encodeBranch(Opcode::BRnzp, nzp, targetAddr);

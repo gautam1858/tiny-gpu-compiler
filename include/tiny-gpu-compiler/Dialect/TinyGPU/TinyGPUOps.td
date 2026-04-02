@@ -3,7 +3,7 @@
 
 include "tiny-gpu-compiler/Dialect/TinyGPU/TinyGPUDialect.td"
 include "mlir/IR/OpBase.td"
-include "mlir/IR/FunctionInterfaces.td"
+include "mlir/Interfaces/FunctionInterfaces.td"
 include "mlir/IR/SymbolInterfaces.td"
 include "mlir/Interfaces/CallInterfaces.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
@@ -169,7 +169,8 @@ def TinyGPU_BranchOp : TinyGPU_Op<"branch", [Terminator]> {
     The condition_mask is a 3-bit value selecting which NZP flags to test.
     Maps to the BRnzp instruction.
   }];
-  let arguments = (ins I8:$nzp, I8Attr:$condition_mask, AnySuccessor:$target);
+  let arguments = (ins I8:$nzp, I8Attr:$condition_mask);
+  let successors = (successor AnySuccessor:$target);
   let assemblyFormat = "$nzp `,` $condition_mask `,` $target attr-dict";
 }
 
@@ -195,7 +196,7 @@ def TinyGPU_JumpOp : TinyGPU_Op<"jump", [Terminator]> {
   let description = [{
     Unconditional branch. Lowered to BRnzp with condition_mask=0b111 (always taken).
   }];
-  let arguments = (ins AnySuccessor:$target);
+  let successors = (successor AnySuccessor:$target);
   let assemblyFormat = "$target attr-dict";
 }
 

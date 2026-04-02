@@ -32,7 +32,7 @@ std::string OptimizationStats::summary() const {
 /// Check if an operation is a tinygpu.const with a given value
 static bool isConstWithValue(Operation *op, uint8_t &val) {
   if (auto constOp = dyn_cast<tinygpu::ConstOp>(op)) {
-    val = constOp.getValue().getZExtValue();
+    val = constOp.getValue();
     return true;
   }
   return false;
@@ -51,8 +51,9 @@ int runConstantFolding(Operation *funcOp) {
           addOp.getRhs().getDefiningOp() &&
           isConstWithValue(addOp.getRhs().getDefiningOp(), rhsVal)) {
         OpBuilder builder(op);
+        auto i8Ty = builder.getI8Type();
         auto result = builder.create<tinygpu::ConstOp>(
-            op->getLoc(), (uint8_t)((lhsVal + rhsVal) & 0xFF));
+            op->getLoc(), i8Ty, (uint8_t)((lhsVal + rhsVal) & 0xFF));
         op->getResult(0).replaceAllUsesWith(result);
         toErase.push_back(op);
         folded++;
@@ -63,8 +64,9 @@ int runConstantFolding(Operation *funcOp) {
           subOp.getRhs().getDefiningOp() &&
           isConstWithValue(subOp.getRhs().getDefiningOp(), rhsVal)) {
         OpBuilder builder(op);
+        auto i8Ty = builder.getI8Type();
         auto result = builder.create<tinygpu::ConstOp>(
-            op->getLoc(), (uint8_t)((lhsVal - rhsVal) & 0xFF));
+            op->getLoc(), i8Ty, (uint8_t)((lhsVal - rhsVal) & 0xFF));
         op->getResult(0).replaceAllUsesWith(result);
         toErase.push_back(op);
         folded++;
@@ -75,8 +77,9 @@ int runConstantFolding(Operation *funcOp) {
           mulOp.getRhs().getDefiningOp() &&
           isConstWithValue(mulOp.getRhs().getDefiningOp(), rhsVal)) {
         OpBuilder builder(op);
+        auto i8Ty = builder.getI8Type();
         auto result = builder.create<tinygpu::ConstOp>(
-            op->getLoc(), (uint8_t)((lhsVal * rhsVal) & 0xFF));
+            op->getLoc(), i8Ty, (uint8_t)((lhsVal * rhsVal) & 0xFF));
         op->getResult(0).replaceAllUsesWith(result);
         toErase.push_back(op);
         folded++;
@@ -141,7 +144,9 @@ int runStrengthReduction(Operation *funcOp) {
       if (mulOp.getRhs().getDefiningOp() &&
           isConstWithValue(mulOp.getRhs().getDefiningOp(), val) && val == 0) {
         OpBuilder builder(op);
-        auto zero = builder.create<tinygpu::ConstOp>(op->getLoc(), (uint8_t)0);
+        auto i8Ty = builder.getI8Type();
+        auto zero = builder.create<tinygpu::ConstOp>(op->getLoc(), i8Ty,
+                                                     (uint8_t)0);
         op->getResult(0).replaceAllUsesWith(zero);
         toErase.push_back(op);
         reduced++;
@@ -159,8 +164,9 @@ int runStrengthReduction(Operation *funcOp) {
       if (mulOp.getRhs().getDefiningOp() &&
           isConstWithValue(mulOp.getRhs().getDefiningOp(), val) && val == 2) {
         OpBuilder builder(op);
-        auto add = builder.create<tinygpu::AddOp>(op->getLoc(), mulOp.getLhs(),
-                                                   mulOp.getLhs());
+        auto i8Ty = builder.getI8Type();
+        auto add = builder.create<tinygpu::AddOp>(op->getLoc(), i8Ty,
+                                                  mulOp.getLhs(), mulOp.getLhs());
         op->getResult(0).replaceAllUsesWith(add);
         toErase.push_back(op);
         reduced++;
@@ -170,7 +176,9 @@ int runStrengthReduction(Operation *funcOp) {
       if (mulOp.getLhs().getDefiningOp() &&
           isConstWithValue(mulOp.getLhs().getDefiningOp(), val) && val == 0) {
         OpBuilder builder(op);
-        auto zero = builder.create<tinygpu::ConstOp>(op->getLoc(), (uint8_t)0);
+        auto i8Ty = builder.getI8Type();
+        auto zero = builder.create<tinygpu::ConstOp>(op->getLoc(), i8Ty,
+                                                     (uint8_t)0);
         op->getResult(0).replaceAllUsesWith(zero);
         toErase.push_back(op);
         reduced++;
@@ -231,14 +239,14 @@ int runCSE(Operation *funcOp) {
   llvm::SmallVector<Operation *, 16> toErase;
 
   for (Block &block : funcOp->getRegion(0)) {
-    llvm::DenseMap<std::pair<unsigned, std::pair<Value, Value>>, Value>
+    llvm::DenseMap<std::pair<const void *, std::pair<Value, Value>>, Value>
         binaryCSE;
     llvm::DenseMap<uint8_t, Value> constCSE;
 
     for (Operation &op : block) {
       // CSE for const ops
       if (auto constOp = dyn_cast<tinygpu::ConstOp>(&op)) {
-        uint8_t val = constOp.getValue().getZExtValue();
+        uint8_t val = constOp.getValue();
         auto it = constCSE.find(val);
         if (it != constCSE.end()) {
           op.getResult(0).replaceAllUsesWith(it->second);

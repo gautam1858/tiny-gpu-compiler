@@ -9,4 +9,5 @@ add_mlir_library(TGCPipeline
   TinyGPUDialect
   TGCFrontend
   TGCCodeGen
+  TGCPasses
 )

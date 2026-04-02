@@ -2,7 +2,7 @@
 
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/OpImplementation.h"
-#include "mlir/IR/FunctionImplementation.h"
+#include "mlir/Interfaces/FunctionImplementation.h"
 
 using namespace mlir;
 using namespace mlir::tinygpu;
@@ -41,5 +41,5 @@ void FuncOp::print(OpAsmPrinter &p) {
 //===----------------------------------------------------------------------===//
 
 OpFoldResult ConstOp::fold(FoldAdaptor adaptor) {
-  return adaptor.getValue();
+  return getValueAttr();
 }

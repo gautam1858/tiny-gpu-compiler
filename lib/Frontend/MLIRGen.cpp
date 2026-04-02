@@ -12,6 +12,7 @@
 #include "mlir/IR/Verifier.h"
 
 #include "llvm/ADT/ScopedHashTable.h"
+#include "llvm/ADT/StringSet.h"
 #include "llvm/Support/raw_ostream.h"
 
 using namespace mlir;
@@ -23,7 +24,8 @@ namespace tgc {
 /// for simplicity, since we're the only frontend and tiny-gpu is 1D only).
 class MLIRGenImpl {
 public:
-  MLIRGenImpl(MLIRContext &context) : builder(&context), context(context) {}
+  MLIRGenImpl(MLIRContext &context)
+      : builder(&context), i8Type(builder.getI8Type()) {}
 
   OwningOpRef<ModuleOp> generate(const Program &program) {
     module = ModuleOp::create(builder.getUnknownLoc());
@@ -43,7 +45,7 @@ public:
 
 private:
   OpBuilder builder;
-  MLIRContext &context;
+  Type i8Type;
   OwningOpRef<ModuleOp> module;
 
   // Symbol table for local variables
@@ -65,12 +67,10 @@ private:
     return *ownedNames.back();
   }
 
-  Location loc(tgc::Location l) {
+  mlir::Location loc(tgc::Location l) {
     return mlir::FileLineColLoc::get(builder.getStringAttr("<kernel>"), l.line,
                                      l.col);
   }
-
-  Type i8Ty() { return builder.getIntegerType(8); }
 
   LogicalResult genKernel(const KernelDef &kernel) {
     ScopeTy scope(symbolTable);
@@ -79,7 +79,12 @@ private:
     auto funcType = builder.getFunctionType({}, {});
     auto funcOp = builder.create<tinygpu::FuncOp>(loc(kernel.loc), kernel.name,
                                                    funcType);
-    Block *entryBlock = funcOp.addEntryBlock();
+    Block *entryBlock;
+    if (funcOp.getBody().empty()) {
+      entryBlock = funcOp.addEntryBlock();
+    } else {
+      entryBlock = &funcOp.getBody().front();
+    }
     builder.setInsertionPointToStart(entryBlock);
 
     // Map parameters to base addresses in data memory.
@@ -96,9 +101,14 @@ private:
       } else {
         paramBaseAddrs[param.name] = scalarAddr;
         // Load the scalar value into a variable
-        auto addrVal =
-            builder.create<tinygpu::ConstOp>(loc(param.loc), (uint8_t)scalarAddr);
-        auto val = builder.create<tinygpu::LoadOp>(loc(param.loc), addrVal);
+        Value addrVal =
+            builder
+                .create<tinygpu::ConstOp>(loc(param.loc), i8Type,
+                                          (uint8_t)scalarAddr)
+                .getResult();
+        Value val =
+            builder.create<tinygpu::LoadOp>(loc(param.loc), i8Type, addrVal)
+                .getResult();
         symbolTable.insert(ownName(param.name), val);
         scalarAddr++;
       }
@@ -123,9 +133,10 @@ private:
         return failure();
     }
 
-    // Add return if not already terminated
-    if (entryBlock->empty() ||
-        !entryBlock->back().hasTrait<OpTrait::IsTerminator>()) {
+    Block *finalBlock = builder.getInsertionBlock();
+    if (finalBlock &&
+        (finalBlock->empty() ||
+         !finalBlock->back().hasTrait<OpTrait::IsTerminator>())) {
       builder.create<tinygpu::ReturnOp>(loc(kernel.loc));
     }
 
@@ -188,9 +199,14 @@ private:
       if (it->second == 0) {
         addr = index;
       } else {
-        auto base = builder.create<tinygpu::ConstOp>(loc(stmt.loc),
-                                                      (uint8_t)it->second);
-        addr = builder.create<tinygpu::AddOp>(loc(stmt.loc), base, index);
+        Value base =
+            builder
+                .create<tinygpu::ConstOp>(loc(stmt.loc), i8Type,
+                                          (uint8_t)it->second)
+                .getResult();
+        addr = builder.create<tinygpu::AddOp>(loc(stmt.loc), i8Type, base,
+                                              index)
+                   .getResult();
       }
       builder.create<tinygpu::SharedStoreOp>(loc(stmt.loc), addr, value);
       return success();
@@ -207,9 +223,14 @@ private:
     if (it->second == 0) {
       addr = index;
     } else {
-      auto base =
-          builder.create<tinygpu::ConstOp>(loc(stmt.loc), (uint8_t)it->second);
-      addr = builder.create<tinygpu::AddOp>(loc(stmt.loc), base, index);
+      Value base =
+          builder
+              .create<tinygpu::ConstOp>(loc(stmt.loc), i8Type,
+                                        (uint8_t)it->second)
+              .getResult();
+      addr =
+          builder.create<tinygpu::AddOp>(loc(stmt.loc), i8Type, base, index)
+              .getResult();
     }
 
     builder.create<tinygpu::StoreOp>(loc(stmt.loc), addr, value);
@@ -232,9 +253,14 @@ private:
     if (it->second == 0) {
       addr = index;
     } else {
-      auto base =
-          builder.create<tinygpu::ConstOp>(loc(stmt.loc), (uint8_t)it->second);
-      addr = builder.create<tinygpu::AddOp>(loc(stmt.loc), base, index);
+      Value base =
+          builder
+              .create<tinygpu::ConstOp>(loc(stmt.loc), i8Type,
+                                        (uint8_t)it->second)
+              .getResult();
+      addr =
+          builder.create<tinygpu::AddOp>(loc(stmt.loc), i8Type, base, index)
+              .getResult();
     }
 
     builder.create<tinygpu::SharedStoreOp>(loc(stmt.loc), addr, value);
@@ -253,8 +279,8 @@ private:
 
     auto parentOp = builder.getBlock()->getParent();
     parentOp->push_back(condBlock);
-    parentOp->push_back(bodyBlock);
     parentOp->push_back(exitBlock);
+    parentOp->push_back(bodyBlock);
 
     // Jump to condition check
     builder.create<tinygpu::JumpOp>(loc(stmt.loc), condBlock);
@@ -271,8 +297,13 @@ private:
     // We use condition_mask = 0b101 (N or P, i.e., not zero) for "not equal"
     // or 0b001 (P only) for "less than result is positive meaning lhs > rhs"
     // For simplicity: branch to body if condVal indicates the comparison is true.
-    auto zeroConst = builder.create<tinygpu::ConstOp>(loc(stmt.loc), (uint8_t)0);
-    auto nzp = builder.create<tinygpu::CmpOp>(loc(stmt.loc), condVal, zeroConst);
+    Value zeroConst =
+        builder.create<tinygpu::ConstOp>(loc(stmt.loc), i8Type, (uint8_t)0)
+            .getResult();
+    Value nzp =
+        builder.create<tinygpu::CmpOp>(loc(stmt.loc), i8Type, condVal,
+                                       zeroConst)
+            .getResult();
     // Branch if positive (condition was nonzero = true)
     builder.create<tinygpu::BranchOp>(loc(stmt.loc), nzp, (uint8_t)0b001,
                                        bodyBlock);
@@ -307,18 +338,26 @@ private:
     Block *mergeBlock = new Block();
 
     auto parentOp = builder.getBlock()->getParent();
-    parentOp->push_back(thenBlock);
-
     Block *elseBlock = nullptr;
     if (!stmt.elseBody.empty()) {
       elseBlock = new Block();
       parentOp->push_back(elseBlock);
+      parentOp->push_back(thenBlock);
+    } else {
+      parentOp->push_back(mergeBlock);
+      parentOp->push_back(thenBlock);
     }
-    parentOp->push_back(mergeBlock);
+    if (elseBlock)
+      parentOp->push_back(mergeBlock);
 
     // Branch on condition
-    auto zeroConst = builder.create<tinygpu::ConstOp>(loc(stmt.loc), (uint8_t)0);
-    auto nzp = builder.create<tinygpu::CmpOp>(loc(stmt.loc), condVal, zeroConst);
+    Value zeroConst =
+        builder.create<tinygpu::ConstOp>(loc(stmt.loc), i8Type, (uint8_t)0)
+            .getResult();
+    Value nzp =
+        builder.create<tinygpu::CmpOp>(loc(stmt.loc), i8Type, condVal,
+                                       zeroConst)
+            .getResult();
     builder.create<tinygpu::BranchOp>(loc(stmt.loc), nzp, (uint8_t)0b001,
                                        thenBlock);
 
@@ -370,8 +409,9 @@ private:
                    << " out of 8-bit range [0, 255]\n";
       return nullptr;
     }
-    return builder.create<tinygpu::ConstOp>(loc(expr.loc),
-                                            (uint8_t)expr.value);
+    return builder
+        .create<tinygpu::ConstOp>(loc(expr.loc), i8Type, (uint8_t)expr.value)
+        .getResult();
   }
 
   Value genIdentifier(const IdentifierExpr &expr) {
@@ -386,11 +426,14 @@ private:
   Value genBuiltinVar(const BuiltinVarExpr &expr) {
     switch (expr.var) {
     case BuiltinVar::ThreadIdx:
-      return builder.create<tinygpu::ThreadIdOp>(loc(expr.loc));
+      return builder.create<tinygpu::ThreadIdOp>(loc(expr.loc), i8Type)
+          .getResult();
     case BuiltinVar::BlockIdx:
-      return builder.create<tinygpu::BlockIdOp>(loc(expr.loc));
+      return builder.create<tinygpu::BlockIdOp>(loc(expr.loc), i8Type)
+          .getResult();
     case BuiltinVar::BlockDim:
-      return builder.create<tinygpu::BlockDimOp>(loc(expr.loc));
+      return builder.create<tinygpu::BlockDimOp>(loc(expr.loc), i8Type)
+          .getResult();
     }
     llvm_unreachable("unhandled builtin var");
   }
@@ -403,13 +446,17 @@ private:
 
     switch (expr.op) {
     case BinOp::Add:
-      return builder.create<tinygpu::AddOp>(loc(expr.loc), lhs, rhs);
+      return builder.create<tinygpu::AddOp>(loc(expr.loc), i8Type, lhs, rhs)
+          .getResult();
     case BinOp::Sub:
-      return builder.create<tinygpu::SubOp>(loc(expr.loc), lhs, rhs);
+      return builder.create<tinygpu::SubOp>(loc(expr.loc), i8Type, lhs, rhs)
+          .getResult();
     case BinOp::Mul:
-      return builder.create<tinygpu::MulOp>(loc(expr.loc), lhs, rhs);
+      return builder.create<tinygpu::MulOp>(loc(expr.loc), i8Type, lhs, rhs)
+          .getResult();
     case BinOp::Div:
-      return builder.create<tinygpu::DivOp>(loc(expr.loc), lhs, rhs);
+      return builder.create<tinygpu::DivOp>(loc(expr.loc), i8Type, lhs, rhs)
+          .getResult();
     case BinOp::Lt:
     case BinOp::Gt:
     case BinOp::Leq:
@@ -417,7 +464,8 @@ private:
     case BinOp::Eq:
     case BinOp::Neq:
       // All comparisons use CMP (lhs - rhs), caller interprets NZP flags
-      return builder.create<tinygpu::CmpOp>(loc(expr.loc), lhs, rhs);
+      return builder.create<tinygpu::CmpOp>(loc(expr.loc), i8Type, lhs, rhs)
+          .getResult();
     }
     llvm_unreachable("unhandled binary op");
   }
@@ -434,11 +482,18 @@ private:
       if (it->second == 0) {
         addr = index;
       } else {
-        auto base = builder.create<tinygpu::ConstOp>(loc(expr.loc),
-                                                      (uint8_t)it->second);
-        addr = builder.create<tinygpu::AddOp>(loc(expr.loc), base, index);
+        Value base =
+            builder
+                .create<tinygpu::ConstOp>(loc(expr.loc), i8Type,
+                                          (uint8_t)it->second)
+                .getResult();
+        addr = builder.create<tinygpu::AddOp>(loc(expr.loc), i8Type, base,
+                                              index)
+                   .getResult();
       }
-      return builder.create<tinygpu::SharedLoadOp>(loc(expr.loc), addr);
+      return builder
+          .create<tinygpu::SharedLoadOp>(loc(expr.loc), i8Type, addr)
+          .getResult();
     }
 
     auto it = paramBaseAddrs.find(expr.array);
@@ -451,12 +506,18 @@ private:
     if (it->second == 0) {
       addr = index;
     } else {
-      auto base =
-          builder.create<tinygpu::ConstOp>(loc(expr.loc), (uint8_t)it->second);
-      addr = builder.create<tinygpu::AddOp>(loc(expr.loc), base, index);
+      Value base =
+          builder
+              .create<tinygpu::ConstOp>(loc(expr.loc), i8Type,
+                                        (uint8_t)it->second)
+              .getResult();
+      addr =
+          builder.create<tinygpu::AddOp>(loc(expr.loc), i8Type, base, index)
+              .getResult();
     }
 
-    return builder.create<tinygpu::LoadOp>(loc(expr.loc), addr);
+    return builder.create<tinygpu::LoadOp>(loc(expr.loc), i8Type, addr)
+        .getResult();
   }
 
   Value genSharedArrayIndex(const SharedArrayIndexExpr &expr) {
@@ -474,12 +535,19 @@ private:
     if (it->second == 0) {
       addr = index;
     } else {
-      auto base =
-          builder.create<tinygpu::ConstOp>(loc(expr.loc), (uint8_t)it->second);
-      addr = builder.create<tinygpu::AddOp>(loc(expr.loc), base, index);
+      Value base =
+          builder
+              .create<tinygpu::ConstOp>(loc(expr.loc), i8Type,
+                                        (uint8_t)it->second)
+              .getResult();
+      addr =
+          builder.create<tinygpu::AddOp>(loc(expr.loc), i8Type, base, index)
+              .getResult();
     }
 
-    return builder.create<tinygpu::SharedLoadOp>(loc(expr.loc), addr);
+    return builder
+        .create<tinygpu::SharedLoadOp>(loc(expr.loc), i8Type, addr)
+        .getResult();
   }
 };
 

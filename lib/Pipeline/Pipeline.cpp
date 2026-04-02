@@ -29,10 +29,7 @@ static void analyzeInstructions(CompilationTrace &trace) {
   analysis.totalInstructions = trace.instructions.size();
 
   for (auto &inst : trace.instructions) {
-    uint16_t binary = 0;
-    if (inst.hex.size() >= 4) {
-      binary = std::stoi(inst.hex.substr(2), nullptr, 16);
-    }
+    uint16_t binary = inst.binary;
     uint16_t opcode = (binary >> 12) & 0xF;
 
     switch (opcode) {
